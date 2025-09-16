@@ -1,9 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,4 +6,398 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+/* =========================
+   Enums (Swagger 기반)
+========================= */
+enum MemberType {
+  SELLER
+  BUYER
+}
+
+enum SalesStatus {
+  ON_SALE
+  OUT_OF_STOCK
+  HIDDEN
+  DELISTED
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  CANCELED
+  FULFILLED
+  REFUNDED
+}
+
+/* PaymentDto.status: CompletedPayment / CancelledPayment / WaitingPayment */
+enum PaymentStatus {
+  COMPLETED_PAYMENT  @map("CompletedPayment")
+  CANCELLED_PAYMENT  @map("CancelledPayment")
+  WAITING_PAYMENT    @map("WaitingPayment")
+}
+
+/* InquiryListResponseDto.status: WaitingAnswer / CompletedAnswer */
+enum InquiryStatus {
+  WAITING_ANSWER     @map("WaitingAnswer")
+  COMPLETED_ANSWER   @map("CompletedAnswer")
+}
+
+enum NotificationType {
+  CART_STOCK_OUT
+  PRODUCT_STOCK_OUT
+  INQUIRY_ANSWERED
+  NEW_INQUIRY
+}
+
+enum PeriodType {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/* =========================
+   Users & Auth
+========================= */
+model User {
+  id            Int          @id @default(autoincrement())
+  publicId      String       @default(uuid()) @unique @map("public_id") // Swagger의 id (GUID)
+  nickname      String       @db.VarChar(50)
+  email         String       @unique @db.VarChar(255)
+  passwordHash  String       @map("password_hash") @db.VarChar(255)
+  memberType    MemberType   @map("member_type")
+  pointsBalance Int          @default(0) @map("points_balance")
+  imageUrl      String?      @map("image_url") @db.VarChar(500)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt      @map("updated_at")
+
+  sessions       Session[]
+  store          Store?
+  favorites      StoreFavorite[]
+  cart           Cart?
+  orders         Order[]        @relation("OrdersByBuyer")
+  reviews        Review[]
+  storeRatings   StoreRating[]
+  inquiries      Inquiry[]
+  inquiryAnswers InquiryAnswer[] @relation("ResponderToAnswers")
+  notifications  Notification[]
+  userPoints     UserPoint[]
+  salesAnalytics SalesAnalytics[] @relation("SellerAnalytics")
+
+  @@map("users")
+}
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  refreshToken String   @unique @map("refresh_token") @db.VarChar(512)
+  expiresAt    DateTime @map("expires_at")
+  userAgent    String?  @map("user_agent") @db.VarChar(255)
+  ipAddress    String?  @map("ip_address")  @db.VarChar(45)
+  createdAt    DateTime @default(now())     @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+/* =========================
+   Store & Favorites
+========================= */
+model Store {
+  id            Int      @id @default(autoincrement())
+  sellerId      Int      @unique @map("seller_id")
+  name          String   @db.VarChar(100)
+  address       String   @db.VarChar(255)
+  detailAddress String   @map("detail_address") @db.VarChar(255)
+  phoneNumber   String   @map("phone_number")   @db.VarChar(20)
+  content       String
+  imageUrl      String?  @map("image_url") @db.VarChar(500)
+  createdAt     DateTime @default(now())  @map("created_at")
+  updatedAt     DateTime @updatedAt       @map("updated_at")
+
+  seller        User            @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  products      Product[]
+  favorites     StoreFavorite[]
+  storeRatings  StoreRating[]
+  notifications Notification[]
+
+  @@map("stores")
+}
+
+model StoreFavorite {
+  id        Int      @id @default(autoincrement())
+  storeId   Int      @map("store_id")
+  userId    Int      @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("store_favorites")
+  @@unique([storeId, userId])
+}
+
+/* =========================
+   Product & Images
+========================= */
+model Product {
+  id          Int          @id @default(autoincrement())
+  publicId    String       @default(uuid()) @unique @map("public_id") // InquiryProductDto.id (GUID)
+  storeId     Int          @map("store_id")
+  name        String       @db.VarChar(100)
+  category    String       @db.VarChar(50)
+  description String
+  price       Int
+  stock       Int          @default(0)
+  salesCount  Int          @default(0) @map("sales_count")
+  ratingAvg   Decimal      @default(0.0) @map("rating_avg") @db.Decimal(3, 2)
+  reviewCount Int          @default(0) @map("review_count")
+  salesStatus SalesStatus  @default(ON_SALE) @map("sales_status")
+  imageUrl    String?      @map("image_url") @db.VarChar(500)
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt      @map("updated_at")
+  deletedAt   DateTime?    @map("deleted_at")
+
+  store         Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  images        ProductImage[]
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  reviews       Review[]
+  inquiries     Inquiry[]
+  notifications Notification[]
+
+  @@map("products")
+}
+
+model ProductImage {
+  id         Int      @id @default(autoincrement())
+  productId  Int      @map("product_id")
+  imageUrl   String   @map("image_url") @db.VarChar(500)
+  position   Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt      @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_images")
+  @@unique([productId, imageUrl])
+}
+
+/* =========================
+   Cart
+========================= */
+model Cart {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime? @map("updated_at")
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        Int      @id @default(autoincrement())
+  cartId    Int      @map("cart_id")
+  productId Int      @map("product_id")
+  quantity  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@map("cart_items")
+  @@unique([cartId, productId])
+}
+
+/* =========================
+   Orders & Payments
+========================= */
+model Order {
+  id            Int         @id @default(autoincrement())
+  publicId      String      @default(uuid()) @unique @map("public_id") // Swagger의 orderId (GUID)
+  buyerId       Int         @map("buyer_id")
+  name          String      @db.VarChar(100)
+  phoneNumber   String      @map("phone_number") @db.VarChar(20)
+  subtotal      Int
+  totalQuantity Int         @map("total_quantity")
+  usedPoint     Int         @default(0) @map("used_point")
+  orderStatus   OrderStatus @default(PENDING) @map("order_status")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt      @map("updated_at")
+
+  buyer   User        @relation("OrdersByBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  items   OrderItem[]
+  payment Payment?
+  points  UserPoint[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        Int  @id @default(autoincrement())
+  orderId   Int  @map("order_id")
+  productId Int  @map("product_id")
+  quantity  Int
+  unitPrice Int  @map("unit_price")
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  review  Review?
+
+  @@map("order_items")
+  @@unique([orderId, productId]) // 주문 내 동일 상품 중복 방지(선택적)
+}
+
+model Payment {
+  id        Int           @id @default(autoincrement())
+  publicId  String        @default(uuid()) @unique @map("public_id") // Swagger의 PaymentDto.id (GUID)
+  orderId   Int           @unique @map("order_id")
+  price     Int
+  status    PaymentStatus @default(WAITING_PAYMENT)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt      @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+/* =========================
+   Reviews & Store Ratings
+========================= */
+model Review {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  productId   Int      @map("product_id")
+  orderItemId Int      @unique @map("order_item_id")
+  content     String
+  starRate    Int      @map("star_rate")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+
+  @@map("reviews")
+}
+
+model StoreRating {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  storeId   Int      @map("store_id")
+  imageUrl  String?  @map("image_url") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("store_ratings")
+  @@unique([userId, storeId])
+}
+
+/* =========================
+   Inquiries & Answers
+========================= */
+model Inquiry {
+  id         Int           @id @default(autoincrement())
+  publicId   String        @default(uuid()) @unique @map("public_id") // InquiryItemDto.id (GUID)
+  productId  Int           @map("product_id")
+  userId     Int           @map("user_id")
+  title      String        @db.VarChar(100)
+  content    String
+  isPrivate  Boolean       @default(false) @map("is_private") // Swagger: isSecret
+  status     InquiryStatus @default(WAITING_ANSWER)           // Swagger의 status enum
+  createdAt  DateTime      @default(now()) @map("created_at")
+  answeredAt DateTime?     @map("answered_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answer  InquiryAnswer?
+
+  @@map("inquiries")
+}
+
+model InquiryAnswer {
+  id          Int      @id @default(autoincrement())
+  inquiryId   Int      @unique @map("inquiry_id")
+  responderId Int      @map("responder_id")
+  content     String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime? @map("updated_at")
+
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  responder User    @relation("ResponderToAnswers", fields: [responderId], references: [id], onDelete: Restrict)
+
+  @@map("inquiry_answers")
+}
+
+/* =========================
+   Notifications
+========================= */
+model Notification {
+  id               Int              @id @default(autoincrement())
+  userId           Int              @map("user_id")
+  productId        Int?             @map("product_id")
+  storeId          Int?             @map("store_id")
+  content          String           @db.VarChar(255)
+  isChecked        Boolean          @default(false) @map("is_checked")
+  notificationType NotificationType @map("notification_type")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime?        @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  store   Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+}
+
+/* =========================
+   Points (Ledger)
+========================= */
+model UserPoint {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  delta          Int
+  reason         String   @db.VarChar(100)
+  relatedOrderId Int?     @map("related_order_id")
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt      @map("updated_at")
+
+  user         User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  relatedOrder Order? @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+
+  @@map("user_points")
+}
+
+/* =========================
+   Dashboard / Analytics
+========================= */
+model SalesAnalytics {
+  id          Int        @id @default(autoincrement())
+  sellerId    Int        @map("seller_id")
+  salesCount  Int        @default(0) @map("sales_count")
+  salesAmount Int        @default(0) @map("sales_amount")
+  top5        Json?
+  priceStats  Json?      @map("price_stats")
+  periodStart DateTime   @db.Date @map("period_start")
+  periodEnd   DateTime   @db.Date @map("period_end")
+  periodType  PeriodType @map("period_type")
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  seller User @relation("SellerAnalytics", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@map("sales_analytics")
+  @@unique([sellerId, periodType, periodStart, periodEnd])
 }
